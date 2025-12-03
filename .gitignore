@@ -1,0 +1,29 @@
+# Vitis HLS project folder (tool-generated)
+hls_proj/
+
+# Generic Vivado/Vitis junk
+*.log
+*.jou
+*.wdb
+*.str
+*.pb
+*.rpt
+*.html
+*.xml
+
+# Tool caches
+.Xil/
+.cache/
+.ip_user_files/
+.ip_user_files/
+.ipcache/
+*.runs/
+*.sim/
+*.hw/
+*.gen/
+*.srcs/
+.vivado/
+
+# Optional out-of-tree build dir if you ever use it
+build/
+
