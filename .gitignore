@@ -1,29 +1,76 @@
-# Vitis HLS project folder (tool-generated)
-hls_proj/
+###############################################################################
+# Vitis HLS build artifacts (ignored)
+###############################################################################
 
-# Generic Vivado/Vitis junk
-*.log
-*.jou
-*.wdb
-*.str
-*.pb
-*.rpt
-*.html
-*.xml
+# Ignore EVERYTHING inside hls/ except your actual source/script dirs
+hls/**/
+!hls/scripts/
+!hls/src/
+!hls/tb/
 
-# Tool caches
-.Xil/
-.cache/
-.ip_user_files/
-.ip_user_files/
-.ipcache/
-*.runs/
-*.sim/
-*.hw/
-*.gen/
-*.srcs/
-.vivado/
+# Specific Vitis/Vivado generated content (any location)
+**/.Xil/
+**/.cache/
+**/.autopilot/
+**/*.log
+**/*.jou
+**/*.wdb
+**/*.pb
+**/*.rpt
+**/*.str
+**/*.html
+**/*.xml
+**/*.json
+**/syn/
+**/sim/
+**/impl/
+**/project_*/
+**/*.ip_user_files/
+**/*.runs/
+**/*.gen/
+**/*.srcs/
+**/*.hw/
+**/*.data/
+**/*.ipcache/
 
-# Optional out-of-tree build dir if you ever use it
-build/
+###############################################################################
+# Python virtual environments (global or under sw/)
+###############################################################################
 
+# Root-level venv (recommended location)
+.venv/
+
+# Any venvs created inside sw/ (just in case)
+sw/**/venv/
+sw/**/.venv/
+sw/**/env/
+
+###############################################################################
+# Python cache files
+###############################################################################
+
+sw/**/__pycache__/
+sw/**/*.pyc
+sw/**/.pytest_cache/
+sw/**/.mypy_cache/
+
+###############################################################################
+# Data directory rules
+###############################################################################
+
+# Ignore intermediate outputs only
+data/outputs/
+
+# But DO NOT ignore:
+#   data/models/
+#   data/dataset/
+#   (these are tracked)
+
+###############################################################################
+# OS / Editor junk
+###############################################################################
+
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

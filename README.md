@@ -14,4 +14,15 @@ Future goals
     - project -> Add Files
     - browse to the new file location
     - remember to select "add files without copying" or "link to files" option
-    
+
+# file structures:
+tinyvit_hls
+    |- hls
+        |- scripts  // vitis_hls scripts
+        |- src      // hls src codes
+        |- tb       // hls tb codes
+    |- data
+        |- models   // model params
+        |- datasets // e.g. imagenet1k subset
+        |- outputs  // intermediate outputs (e.g. output of stage 1)
+    |- sw
