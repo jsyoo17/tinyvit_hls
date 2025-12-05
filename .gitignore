@@ -20,7 +20,6 @@ hls/**/
 **/*.str
 **/*.html
 **/*.xml
-**/*.json
 **/syn/
 **/sim/
 **/impl/
