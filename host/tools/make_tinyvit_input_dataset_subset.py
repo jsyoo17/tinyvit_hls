@@ -3,7 +3,7 @@
 make_tinyvit_input_dataset_subset.py
 
 example usage in powershell:
-    python sw/tools/make_tinyvit_input_dataset_subset.py `
+    python host/tools/make_tinyvit_input_dataset_subset.py `
     --data-root data/datasets/imagenet1k_val_subset/ILSVRC2012_img_val_subset `
     --num-images 1000
 

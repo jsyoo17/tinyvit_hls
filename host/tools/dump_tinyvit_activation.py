@@ -1,49 +1,65 @@
 #!/usr/bin/env python3
 
 import os
+import json
 import argparse
 from pathlib import Path
-from functools import reduce
 
 import numpy as np
 import torch
 import timm
 
 
-# ----------------------------
-# Binary tensor I/O helpers
-# ----------------------------
-
 """
 example usage:
     # single module
-    python sw/tests/dump_tinyvit_activation.py `
+    python host/tools/dump_tinyvit_activation.py `
       --num-images 1000 `
       --module patch_embed.conv1.conv `
       --device cpu
 
     # multiple modules
-    python sw/tests/dump_tinyvit_activation.py `
-      --num-images 1000 `
+    python host/tools/dump_tinyvit_activation.py `
+      --num-images 100 `
       --modules patch_embed.conv1.conv stages.0.blocks.0.local_conv `
       --device cpu
 
-    # all modules (will skip non-4D outputs)
-    python sw/tests/dump_tinyvit_activation.py `
-      --num-images 1000 `
+    # all modules (ALL tensor outputs with ndim >= 1 will be saved, with size prompt)
+    python host/tools/dump_tinyvit_activation.py `
+      --num-images 50 `
       --all `
-      --device cpu
+      --device cuda
 
-this will produce (for each 4D module):
-    data/test_vectors/input_1000/<module_name>_output_1000_golden.bin
+
+Inputs (input_N.bin):
+    Format (4D only, for model input):
+        int32 N, C, H, W
+        float32 data[N*C*H*W]
+
+Activations (this script):
+    data/test_vectors/input_N/<module_name_with_underscores>_output_N_golden.bin
+
+    Format (ND, generic):
+        int32 ndim
+        int32 dim_0, ..., dim_{ndim-1}
+        float32 data[∏ dim_i]
+
+Plus JSON manifest:
+    data/test_vectors/input_N/activations_manifest_N.json
 """
 
+
+# ----------------------------
+# Binary tensor I/O helpers
+# ----------------------------
 
 def load_tensor_bin(path: str) -> torch.Tensor:
     """
     Load [N, C, H, W] tensor from .bin file with format:
         int32 N, C, H, W
         float32 data[N*C*H*W] (row-major)
+
+    This is used for input_N.bin only.
     """
     with open(path, "rb") as f:
         header = np.fromfile(f, dtype=np.int32, count=4)
@@ -62,18 +78,22 @@ def load_tensor_bin(path: str) -> torch.Tensor:
     return torch.from_numpy(arr)
 
 
-def save_tensor_bin(path: str, tensor: torch.Tensor) -> None:
+def save_activation_bin(path: str, tensor: torch.Tensor) -> None:
     """
-    Save [N, C, H, W] tensor in .bin format:
-        int32 N, C, H, W
-        float32 data[N*C*H*W]
+    Save an activation tensor of arbitrary shape (e.g. 1D, 2D, 3D, 4D)
+    in ND .bin format:
+
+        int32 ndim
+        int32 dim_0, ..., dim_{ndim-1}
+        float32 data[∏ dim_i]
     """
     t = tensor.detach().cpu().contiguous()
-    if t.ndim != 4:
-        raise ValueError(f"Expected 4D tensor [N,C,H,W], got shape {t.shape}")
-    N, C, H, W = t.shape
+    ndim = t.ndim
+    if ndim < 1:
+        raise ValueError(f"Expected ndim >= 1, got {ndim} for tensor {t.shape}")
+    shape = list(t.shape)
 
-    header = np.array([N, C, H, W], dtype=np.int32)
+    header = np.array([ndim] + shape, dtype=np.int32)
     data = t.numpy().astype(np.float32).ravel()
 
     out_dir = os.path.dirname(path)
@@ -84,7 +104,7 @@ def save_tensor_bin(path: str, tensor: torch.Tensor) -> None:
         header.tofile(f)
         data.tofile(f)
 
-    print(f"[INFO] Saved tensor {t.shape} to {path}")
+    print(f"[INFO] Saved activation {tuple(shape)} (ndim={ndim}) to {path}")
 
 
 # ----------------------------
@@ -107,13 +127,12 @@ def load_tinyvit_model(
 
     print("[INFO] Using models directory:", models_dir)
 
-    # Redirect HF + timm caches (same idea as your notebook snippet)
+    # Redirect HF + timm caches
     os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
     os.environ["HF_HOME"] = str(models_dir)
     os.environ["HF_HUB_CACHE"] = str(models_dir)
     os.environ["XDG_CACHE_HOME"] = str(models_dir)
 
-    # Derive a safe filename for the state_dict
     safe_name = model_name.replace(".", "_")
     state_path = models_dir / f"{safe_name}_state_dict.pth"
 
@@ -138,23 +157,7 @@ def load_tinyvit_model(
 
 
 # ----------------------------
-# Module lookup helper
-# ----------------------------
-
-def get_module_by_path(model: torch.nn.Module, module_path: str) -> torch.nn.Module:
-    """
-    Resolve a dotted module path like "patch_embed.conv1.conv"
-    into the actual submodule.
-    """
-    parts = module_path.split(".")
-    module = model
-    for p in parts:
-        module = getattr(module, p)
-    return module
-
-
-# ----------------------------
-# Main script
+# Main
 # ----------------------------
 
 def main():
@@ -185,7 +188,7 @@ def main():
     parser.add_argument(
         "--all",
         action="store_true",
-        help="Dump activations for all modules (only 4D outputs will be saved).",
+        help="Dump activations for all modules (ALL tensor outputs with ndim >= 1).",
     )
     parser.add_argument(
         "--input-root",
@@ -236,7 +239,6 @@ def main():
 
     # Decide which module names to hook
     if args.all:
-        # all named submodules (we'll only save 4D outputs later)
         module_names = [name for name, _ in model.named_modules() if name]
         print(f"[INFO] --all selected, will hook {len(module_names)} modules.")
     else:
@@ -255,7 +257,6 @@ def main():
         for name in module_names:
             print(f"   - {name}")
 
-    # Map from name -> module
     name_to_module = dict(model.named_modules())
 
     # Register hooks
@@ -278,7 +279,6 @@ def main():
     with torch.no_grad():
         _ = model(x.to(device))
 
-    # Remove hooks
     for h in handles:
         h.remove()
 
@@ -287,43 +287,67 @@ def main():
             "No outputs captured. Check module names or whether modules are used in forward."
         )
 
-    # Filter 4D outputs and compute total size
+    # Include ALL tensors with ndim >= 1, estimate total size
     tensors_to_save = {}
     total_bytes = 0
     for name, t in captured.items():
         t_cpu = t.detach().cpu()
-        if t_cpu.ndim != 4:
-            print(f"[WARN] Skipping '{name}' with non-4D shape {tuple(t_cpu.shape)}")
+        if t_cpu.ndim < 1:
+            print(f"[WARN] Skipping '{name}' with ndim=0 (scalar) shape={tuple(t_cpu.shape)}")
             continue
-        N_out, C_out, H_out, W_out = t_cpu.shape
-        num_elems = N_out * C_out * H_out * W_out
-        bytes_this = 16 + num_elems * 4  # header + data
+
+        num_elems = int(np.prod(t_cpu.shape))
+        header_ints = 1 + t_cpu.ndim  # ndim + dims
+        bytes_this = header_ints * 4 + num_elems * 4  # int32 + float32
+
         total_bytes += bytes_this
         tensors_to_save[name] = t_cpu
 
     if not tensors_to_save:
-        print("[WARN] No 4D outputs to save. Nothing to do.")
+        print("[WARN] No tensor outputs (ndim >= 1) to save. Nothing to do.")
         return
 
-    # Disk size estimate
     total_mb = total_bytes / (1024 ** 2)
     total_gb = total_bytes / (1024 ** 3)
     print(f"[INFO] Will save {len(tensors_to_save)} activation tensor(s).")
     print(f"[INFO] Estimated total size: {total_mb:.2f} MB ({total_gb:.3f} GB).")
 
-    # Ask user to confirm
     resp = input("Proceed with saving these activations? [y/N]: ").strip().lower()
     if resp not in ("y", "yes"):
         print("[INFO] Aborting without saving activations.")
         return
 
-    # Save tensors
+    # Save tensors + collect manifest info
+    manifest = {
+        "num_images": N,
+        "model_name": args.model_name,
+        "input_file": str(input_path),
+        "dtype": "float32",
+        "activation_bin_format": "ndim:int32, dims:int32[ndim], data:float32[∏dims]",
+        "tensors": [],
+    }
+
     for name, t_cpu in tensors_to_save.items():
         module_name_flat = name.replace(".", "_")
         out_fname = f"{module_name_flat}_output_{N}_golden.bin"
         out_path = input_dir / out_fname
         print(f"[INFO] Saving activation for '{name}' -> {out_fname}")
-        save_tensor_bin(str(out_path), t_cpu)
+        save_activation_bin(str(out_path), t_cpu)
+
+        entry = {
+            "module": name,
+            "file": out_fname,
+            "shape": list(t_cpu.shape),
+            "ndim": int(t_cpu.ndim),
+            "dtype": "float32",
+        }
+        manifest["tensors"].append(entry)
+
+    # Save manifest JSON
+    manifest_path = input_dir / f"activations_manifest_{N}.json"
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+    print(f"[INFO] Saved activation manifest to {manifest_path}")
 
     print("[DONE] Activation dump complete.")
 

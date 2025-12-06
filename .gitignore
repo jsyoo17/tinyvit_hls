@@ -39,11 +39,6 @@ hls/**/
 # Root-level venv (recommended location)
 .venv/
 
-# Any venvs created inside sw/ (just in case)
-sw/**/venv/
-sw/**/.venv/
-sw/**/env/
-
 ###############################################################################
 # Python cache files
 ###############################################################################
@@ -56,8 +51,6 @@ sw/**/.mypy_cache/
 ###############################################################################
 # Data directory rules
 ###############################################################################
-
-# Ignore intermediate outputs only
 data/test_vectors/
 data/models/
 
