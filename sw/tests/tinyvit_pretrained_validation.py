@@ -16,7 +16,8 @@ import matplotlib.pyplot as plt
 
 # Auto-detect data root (works when running from notebooks/ or project root)
 _candidates = [
-    Path("../../data/datasets/imagenet1k_val_subset/ILSVRC2012_img_val_subset")
+    Path("data/datasets/imagenet1k_val_subset/ILSVRC2012_img_val_subset"),
+    Path("../../data/datasets/imagenet1k_val_subset/ILSVRC2012_img_val_subset"),
 ]
 ROOT = next((p for p in _candidates if p.exists()), None)
 if ROOT is None:
@@ -217,7 +218,7 @@ except Exception:
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-print(f"Reported accuracy — Top1: {79.1:.2f}%, Top5: {94.8:.2f}%")
+print(f"Reported accuracy — Top1: {80.7:.2f}%, Top5: {95.6:.2f}%")
 
 if "val_loader" not in globals():
     print("val_loader not found in notebook.")
@@ -260,3 +261,96 @@ else:
         top1_acc = 100.0 * correct1 / total
         top5_acc = 100.0 * correct5 / total
         print(f"Evaluated {total} samples — Top1: {top1_acc:.2f}%, Top5: {top5_acc:.2f}%")
+
+# %%
+# Show first image from first 20 classes (000..019) and include top1 prediction in titles
+n_classes = 20
+selected_imgs = []
+selected_meta = []   # (cls_str, human, path)
+titles = []
+
+# val_loader.dataset.samples entries: (path, label_int, cls_str, human)
+for i in range(n_classes):
+    cls = f"{i:03d}"
+    found = False
+    for idx, sample in enumerate(val_loader.dataset.samples):
+        if sample[2] == cls:
+            img_tensor, label_int, cls_str, human, p = val_loader.dataset[idx]  # __getitem__ applies transforms
+            selected_imgs.append(img_tensor)
+            selected_meta.append((cls_str, human, p))
+            titles.append(f"{cls} - {human}")
+            found = True
+            break
+    if not found:
+        selected_imgs.append(None)
+        selected_meta.append((cls, "(missing)", None))
+        titles.append(f"{cls} (missing)")
+
+# Prepare predictions for available images
+pred_labels = [None] * n_classes  # will hold predicted ints or None
+if "model" in globals() and "class_index" in globals():
+    model.eval()
+    device = next(model.parameters()).device if any(p.requires_grad for p in model.parameters()) else torch.device("cpu")
+    # collect available tensors and their indices
+    available = []
+    available_idx = []
+    for i, t in enumerate(selected_imgs):
+        if t is not None:
+            available.append(t)
+            available_idx.append(i)
+    if available:
+        imgs_batch = torch.stack(available)  # normalized tensors (cpu)
+        with torch.no_grad():
+            logits = model(imgs_batch.to(device))  # (B, 1000)
+            preds = logits.argmax(dim=1).cpu().tolist()  # top1 ints
+        for j, idx in enumerate(available_idx):
+            pred_labels[idx] = preds[j]
+else:
+    print("Warning: model or class_index not available — predictions will be omitted.")
+
+# Denormalize for plotting
+available = [t for t in selected_imgs if t is not None]
+if available:
+    imgs_t = torch.stack(available)  # (N, C, H, W) normalized
+    mean = torch.tensor(IMAGENET_MEAN).view(1, 3, 1, 1)
+    std  = torch.tensor(IMAGENET_STD).view(1, 3, 1, 1)
+    imgs_denorm = imgs_t * std + mean
+    imgs_denorm = imgs_denorm.clamp(0.0, 1.0)
+    imgs_np = imgs_denorm.permute(0, 2, 3, 1).cpu().numpy()
+else:
+    imgs_np = []
+
+# Build final titles incorporating prediction (if available)
+final_titles = []
+avail_i = 0
+for i in range(n_classes):
+    cls_str, human, _ = selected_meta[i]
+    if selected_imgs[i] is None:
+        final_titles.append(f"{cls_str} (missing)")
+    else:
+        pred = pred_labels[i]
+        if pred is None:
+            final_titles.append(f"Ground Truth: {cls_str} - {human}\nTop1 Pred: (n/a)")
+        else:
+            pred_str = f"{pred:03d}"
+            pred_human = class_index.get(pred_str, ["", "(unknown)"])[1]
+            final_titles.append(f"Ground Truth: {cls_str} - {human}\nTop1 Pred: {pred_str} - {pred_human}")
+
+# Plot grid (placeholders for missing)
+cols = 5
+rows = (n_classes + cols - 1) // cols
+plt.figure(figsize=(cols * 3, rows * 3))
+# plt.title(f"reported top1: 80.7%, top5: 95.6%\npredicted top1: {top1_acc:.2f}%, top5: {top5_acc:.2f}%")
+img_i = 0
+for i in range(n_classes):
+    plt.subplot(rows, cols, i + 1)
+    if selected_imgs[i] is None:
+        plt.text(0.5, 0.5, final_titles[i], ha="center", va="center")
+        plt.axis("off")
+    else:
+        plt.imshow(imgs_np[img_i])
+        plt.title(final_titles[i], fontsize=8)
+        plt.axis("off")
+        img_i += 1
+plt.tight_layout()
+plt.show()

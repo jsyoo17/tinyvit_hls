@@ -58,10 +58,10 @@ sw/**/.mypy_cache/
 ###############################################################################
 
 # Ignore intermediate outputs only
-data/outputs/
+data/test_vectors/
+data/models/
 
 # But DO NOT ignore:
-#   data/models/
 #   data/dataset/
 #   (these are tracked)
 
