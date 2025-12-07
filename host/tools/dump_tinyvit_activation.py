@@ -28,7 +28,7 @@ example usage:
     python host/tools/dump_tinyvit_activation.py `
       --num-images 50 `
       --all `
-      --device cuda
+      --device cpu
 
 
 Inputs (input_N.bin):
