@@ -1,47 +1,18 @@
 # %%
-# TinyViT pretrained validation (CPU/GPU friendly, Windows-safe)
-
-import os
-import json
-import re
-from pathlib import Path
-
+# basic pytorch test
 import torch
 print("Torch version:", torch.__version__)
 print("CUDA available:", torch.cuda.is_available())
 
-# -------------------------------
-# Device / performance config
-# -------------------------------
-PREFERRED_DEVICE = "auto"  # "auto", "cuda", or "cpu"
-
-
-def get_device(preferred: str = "auto") -> torch.device:
-    preferred = preferred.lower()
-    if preferred == "cpu":
-        return torch.device("cpu")
-    if preferred == "cuda":
-        if torch.cuda.is_available():
-            return torch.device("cuda")
-        print("[WARN] CUDA requested but not available. Falling back to CPU.")
-        return torch.device("cpu")
-    # "auto": use GPU if available, else CPU
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-DEVICE = get_device(PREFERRED_DEVICE)
-print(f"Using device: {DEVICE}")
-
 # %%
+import json
+from pathlib import Path
 from PIL import Image
+import torch
 from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as T
+import re
 import matplotlib.pyplot as plt
-import timm
-
-# -------------------------------
-# Dataset setup
-# -------------------------------
 
 # Auto-detect data root (works when running from notebooks/ or project root)
 _candidates = [
@@ -60,15 +31,12 @@ with open(CLASS_INDEX_PATH, "r", encoding="utf-8") as f:
     class_index = json.load(f)  # keys like "000" -> [wnid, human_label]
 
 ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".bmp"}
-
-
 def list_image_files(dirpath: Path):
     return sorted([p for p in dirpath.iterdir() if p.is_file() and p.suffix.lower() in ALLOWED_EXT])
 
-
-# Standard ImageNet transforms for pretrained TinyViT / ResNet18
+# Standard ImageNet transforms for pretrained ResNet18
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
-IMAGENET_STD = [0.229, 0.224, 0.225]
+IMAGENET_STD  = [0.229, 0.224, 0.225]
 val_transforms = T.Compose([
     T.Resize(256),
     T.CenterCrop(224),
@@ -76,26 +44,21 @@ val_transforms = T.Compose([
     T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
 ])
 
-
 class ImageNetSubsetDataset(Dataset):
     """ROOT/<class_dir>/*.jpg layout. Returns (img_tensor, label_int, class_str, human_label, path)."""
-
     def __init__(self, root: Path, transforms=None):
         self.root = Path(root)
         self.transforms = transforms
         self.samples = []
         digit_dir_re = re.compile(r"^\d{3}$")
-        class_dirs = sorted([d for d in self.root.iterdir()
-                             if d.is_dir() and digit_dir_re.match(d.name)])
+        class_dirs = sorted([d for d in self.root.iterdir() if d.is_dir() and digit_dir_re.match(d.name)])
         for d in class_dirs:
             for p in list_image_files(d):
                 cls = d.name
                 human = class_index.get(cls, ["", "(unknown)"])[1]
                 self.samples.append((p, int(cls), cls, human))
-
     def __len__(self):
         return len(self.samples)
-
     def __getitem__(self, idx):
         p, label_int, cls_str, human = self.samples[idx]
         img = Image.open(p).convert("RGB")
@@ -103,40 +66,16 @@ class ImageNetSubsetDataset(Dataset):
             img = self.transforms(img)
         return img, label_int, cls_str, human, str(p)
 
-
-def prepare_dataloader(batch_size=None, num_workers=None,
-                       shuffle=False, transforms=val_transforms):
+def prepare_dataloader(batch_size=16, num_workers=0, shuffle=False, transforms=val_transforms):
     ds = ImageNetSubsetDataset(ROOT, transforms=transforms)
-
-    # Reasonable defaults depending on device
-    if batch_size is None:
-        batch_size = 64 if DEVICE.type == "cuda" else 16
-
-    # On Windows, avoid multiprocessing issues by default
-    if num_workers is None:
-        if os.name == "nt":
-            num_workers = 0
-        else:
-            num_workers = 4 if DEVICE.type == "cuda" else 0
-
-    pin_memory = DEVICE.type == "cuda"
-
-    dl = DataLoader(
-        ds,
-        batch_size=batch_size,
-        shuffle=shuffle,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-    )
+    dl = DataLoader(ds, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, pin_memory=False)
     return dl
 
-
 # Example: create dataloader for inference
-val_loader = prepare_dataloader()
+val_loader = prepare_dataloader(batch_size=16, num_workers=0, shuffle=False)
 print(f"Prepared DataLoader with {len(val_loader.dataset)} images.")
 
-# %%
-# Quick sanity visualization (first image from first 20 classes)
+# Show first image from first 20 classes (000..019)
 n_classes = 20
 selected_imgs = []
 titles = []
@@ -147,7 +86,7 @@ for i in range(n_classes):
     found = False
     for idx, sample in enumerate(val_loader.dataset.samples):
         if sample[2] == cls:
-            img_tensor, label_int, cls_str, human, _ = val_loader.dataset[idx]
+            img_tensor, label_int, cls_str, human, _ = val_loader.dataset[idx]  # __getitem__ applies transforms
             selected_imgs.append(img_tensor)
             titles.append(f"{cls} - {human}")
             found = True
@@ -156,17 +95,20 @@ for i in range(n_classes):
         selected_imgs.append(None)
         titles.append(f"{cls} (missing)")
 
+# Stack only available tensors
 available = [t for t in selected_imgs if t is not None]
 if available:
     imgs_t = torch.stack(available)  # (N, C, H, W)
+    # Denormalize
     mean = torch.tensor(IMAGENET_MEAN).view(1, 3, 1, 1)
-    std = torch.tensor(IMAGENET_STD).view(1, 3, 1, 1)
+    std  = torch.tensor(IMAGENET_STD).view(1, 3, 1, 1)
     imgs_denorm = imgs_t * std + mean
     imgs_denorm = imgs_denorm.clamp(0.0, 1.0)
     imgs_np = imgs_denorm.permute(0, 2, 3, 1).cpu().numpy()
 else:
     imgs_np = []
 
+# Plot grid (placeholders for missing)
 cols = 5
 rows = (n_classes + cols - 1) // cols
 plt.figure(figsize=(cols * 3, rows * 3))
@@ -185,32 +127,52 @@ plt.tight_layout()
 plt.show()
 
 # %%
-# -------------------------------
-# TinyViT-5M loading
-# -------------------------------
+from pathlib import Path
+import os
+import torch
+import timm
 
+# -------------------------------
 # 1. Models directory
+# -------------------------------
 models_dir = Path("../../data/models")
 models_dir.mkdir(parents=True, exist_ok=True)
+
 print("Using models directory:", models_dir.resolve())
 
+# -------------------------------
 # 2. Force HuggingFace + timm cache into models/
+# -------------------------------
+# Disable Xet Storage (important for TinyViT)
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+
+# HF uses these paths; timm uses HF internally
 os.environ["HF_HOME"] = str(models_dir.resolve())
 os.environ["HF_HUB_CACHE"] = str(models_dir.resolve())
+
+# (Optional but safe – prevent other caches)
 os.environ["XDG_CACHE_HOME"] = str(models_dir.resolve())
 
+# -------------------------------
 # 3. Filenames for saving
+# -------------------------------
+
+# Original TinyViT-5M pretrained on ImageNet-1K
 # state_fname = "tinyvit_5m_224_in1k_state_dict.pth"
 # full_fname  = "tinyvit_5m_224_in1k_fullmodel.pth"
+# TinyViT-5M with distillation pretrained on ImageNet-22K and fine-tuned on ImageNet-1K
 state_fname = "tinyvit_5m_224_dist_in22k_ft_in1k_state_dict.pth"
-full_fname = "tinyvit_5m_224_dist_in22k_ft_in1k_fullmodel.pth"
+full_fname  = "tinyvit_5m_224_dist_in22k_ft_in1k_fullmodel.pth"
 
 state_path = models_dir / state_fname
-full_path = models_dir / full_fname
+full_path  = models_dir / full_fname
 
-# 4. Load TinyViT (on CPU first)
-model_name = "tiny_vit_5m_224.dist_in22k_ft_in1k"
+# -------------------------------
+# 4. Load TinyViT
+# -------------------------------
+
+# model_name = "tiny_vit_5m_224.in1k"   # original name without distillation
+model_name = "tiny_vit_5m_224.dist_in22k_ft_in1k"  # with distillation
 
 if state_path.exists():
     print(f"Found saved TinyViT state_dict at {state_path.resolve()}")
@@ -224,11 +186,12 @@ else:
 
 model.eval()
 
-# 5. Save state_dict and full model (CPU)
+# -------------------------------
+# 5. Save state_dict and full model
+# -------------------------------
 try:
-    model_cpu = model.to("cpu")
-    torch.save(model_cpu.state_dict(), state_path)
-    torch.save(model_cpu, full_path)
+    torch.save(model.state_dict(), state_path)
+    torch.save(model, full_path)
 
     print("\nSaved TinyViT files:")
     print(" - state_dict ->", state_path.resolve())
@@ -237,14 +200,15 @@ try:
 except Exception as e:
     print("Error while saving TinyViT files:", e)
 
+# -------------------------------
 # 6. Print architecture summary
+# -------------------------------
 print("\nTinyViT-5M architecture:\n")
 print(model)
 
 # %%
-# -------------------------------
-# Evaluate pretrained model on val_loader (Top1 / Top5)
-# -------------------------------
+# evaluate pretrained model on val_loader (Top1 / Top5)
+import torch
 try:
     from tqdm.auto import tqdm
     _tqdm_available = True
@@ -252,18 +216,14 @@ except Exception:
     tqdm = None
     _tqdm_available = False
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 print(f"Reported accuracy — Top1: {80.7:.2f}%, Top5: {95.6:.2f}%")
 
-top1_acc = None
-top5_acc = None
-
 if "val_loader" not in globals():
-    print("val_loader not found in script.")
+    print("val_loader not found in notebook.")
 else:
-    # Move model to target DEVICE for evaluation
-    model = model.to(DEVICE)
     model.eval()
-
     correct1 = 0
     correct5 = 0
     total = 0
@@ -276,12 +236,9 @@ else:
 
     with torch.no_grad():
         for batch_idx, batch in enumerate(iterator):
-            # dataset returns (img, label, cls_str, human, path)
-            images, labels, *rest = batch
-
-            non_blocking = DEVICE.type == "cuda"
-            images = images.to(DEVICE, non_blocking=non_blocking)
-            labels = labels.to(DEVICE, non_blocking=non_blocking)
+            images, labels, *rest = batch  # dataset returns (img, label, cls_str, human, path)
+            images = images.to(device)
+            labels = labels.to(device)
 
             logits = model(images)                      # (B, 1000)
             topk = logits.topk(5, dim=1).indices        # (B, 5)
@@ -306,20 +263,19 @@ else:
         print(f"Evaluated {total} samples — Top1: {top1_acc:.2f}%, Top5: {top5_acc:.2f}%")
 
 # %%
-# -------------------------------
-# Visualization: first 20 classes with predictions
-# -------------------------------
+# Show first image from first 20 classes (000..019) and include top1 prediction in titles
 n_classes = 20
 selected_imgs = []
 selected_meta = []   # (cls_str, human, path)
 titles = []
 
+# val_loader.dataset.samples entries: (path, label_int, cls_str, human)
 for i in range(n_classes):
     cls = f"{i:03d}"
     found = False
     for idx, sample in enumerate(val_loader.dataset.samples):
         if sample[2] == cls:
-            img_tensor, label_int, cls_str, human, p = val_loader.dataset[idx]
+            img_tensor, label_int, cls_str, human, p = val_loader.dataset[idx]  # __getitem__ applies transforms
             selected_imgs.append(img_tensor)
             selected_meta.append((cls_str, human, p))
             titles.append(f"{cls} - {human}")
@@ -331,23 +287,22 @@ for i in range(n_classes):
         titles.append(f"{cls} (missing)")
 
 # Prepare predictions for available images
-pred_labels = [None] * n_classes
+pred_labels = [None] * n_classes  # will hold predicted ints or None
 if "model" in globals() and "class_index" in globals():
     model.eval()
-    model = model.to(DEVICE)
-
+    device = next(model.parameters()).device if any(p.requires_grad for p in model.parameters()) else torch.device("cpu")
+    # collect available tensors and their indices
     available = []
     available_idx = []
     for i, t in enumerate(selected_imgs):
         if t is not None:
             available.append(t)
             available_idx.append(i)
-
     if available:
-        imgs_batch = torch.stack(available)  # normalized tensors (CPU)
+        imgs_batch = torch.stack(available)  # normalized tensors (cpu)
         with torch.no_grad():
-            logits = model(imgs_batch.to(DEVICE))
-            preds = logits.argmax(dim=1).cpu().tolist()
+            logits = model(imgs_batch.to(device))  # (B, 1000)
+            preds = logits.argmax(dim=1).cpu().tolist()  # top1 ints
         for j, idx in enumerate(available_idx):
             pred_labels[idx] = preds[j]
 else:
@@ -356,9 +311,9 @@ else:
 # Denormalize for plotting
 available = [t for t in selected_imgs if t is not None]
 if available:
-    imgs_t = torch.stack(available)  # (N, C, H, W)
+    imgs_t = torch.stack(available)  # (N, C, H, W) normalized
     mean = torch.tensor(IMAGENET_MEAN).view(1, 3, 1, 1)
-    std = torch.tensor(IMAGENET_STD).view(1, 3, 1, 1)
+    std  = torch.tensor(IMAGENET_STD).view(1, 3, 1, 1)
     imgs_denorm = imgs_t * std + mean
     imgs_denorm = imgs_denorm.clamp(0.0, 1.0)
     imgs_np = imgs_denorm.permute(0, 2, 3, 1).cpu().numpy()
@@ -367,6 +322,7 @@ else:
 
 # Build final titles incorporating prediction (if available)
 final_titles = []
+avail_i = 0
 for i in range(n_classes):
     cls_str, human, _ = selected_meta[i]
     if selected_imgs[i] is None:
@@ -378,22 +334,13 @@ for i in range(n_classes):
         else:
             pred_str = f"{pred:03d}"
             pred_human = class_index.get(pred_str, ["", "(unknown)"])[1]
-            final_titles.append(
-                f"Ground Truth: {cls_str} - {human}\nTop1 Pred: {pred_str} - {pred_human}"
-            )
+            final_titles.append(f"Ground Truth: {cls_str} - {human}\nTop1 Pred: {pred_str} - {pred_human}")
 
-# Plot grid
+# Plot grid (placeholders for missing)
 cols = 5
 rows = (n_classes + cols - 1) // cols
 plt.figure(figsize=(cols * 3, rows * 3))
-# If you want a global title with accuracies:
-# if top1_acc is not None and top5_acc is not None:
-#     plt.suptitle(
-#         f"reported top1: 80.7%, top5: 95.6%\n"
-#         f"predicted top1: {top1_acc:.2f}%, top5: {top5_acc:.2f}%",
-#         fontsize=10
-#     )
-
+# plt.title(f"reported top1: 80.7%, top5: 95.6%\npredicted top1: {top1_acc:.2f}%, top5: {top5_acc:.2f}%")
 img_i = 0
 for i in range(n_classes):
     plt.subplot(rows, cols, i + 1)
