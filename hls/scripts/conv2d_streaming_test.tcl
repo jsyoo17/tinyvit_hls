@@ -1,16 +1,16 @@
-# hls/scripts/test_hls_project.tcl
+# hls/scripts/conv2d_streaming_test.tcl
 # Run from repo root:
-#   vitis_hls -f hls/scripts/test_hls_project.tcl
+#   vitis_hls -f hls/scripts/conv2d_streaming_test.tcl
 
 # =============================================================================
-# === USER CONFIG SECTION: CHANGE THESE WHEN YOU MAKE A NEW HLS PROJECT =======
+# === USER CONFIG SECTION =====================================================
 # =============================================================================
 
 # Project name (used as Vitis HLS project name AND folder name under hls/build/)
-set proj_name      "test_hls_project"
+set proj_name      "conv2d_streaming_test"
 
 # Top-level function name in your C/C++ source
-set top_name       "my_top"
+set top_name       "conv2d_nchw_streaming_top"
 
 # Device / part (KV260: xck26-sfvc784-2LV-c)
 set part_name      "xck26-sfvc784-2LV-c"
@@ -19,15 +19,13 @@ set part_name      "xck26-sfvc784-2LV-c"
 set clock_period   10
 
 # Design source files (relative to hls/src/)
-# Add/remove entries here as your design grows
 set design_sources {
-    "top.cpp"
-    "top.hpp"
+    "conv2d_streaming_im2col.cpp"
 }
 
 # Testbench source files (relative to hls/tb/)
 set tb_sources {
-    "tb_top.cpp"
+    "tb_conv2d_streaming.cpp"
 }
 
 # Which steps to run (set to 0/1 as needed)
@@ -54,8 +52,6 @@ file mkdir $build_dir
 
 # -----------------------------------------------------------------------------
 # Create / reset project
-# NOTE: open_project takes a *name*, not a path.
-#       We cd into build_dir so the project is created in hls/build/.
 # -----------------------------------------------------------------------------
 cd $build_dir
 open_project -reset $proj_name
