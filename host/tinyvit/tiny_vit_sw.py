@@ -673,7 +673,7 @@ def create_tiny_vit_5m_sw(
     print("[SW] load_state_dict(strict=False)")
     print(f"[SW]   Model params not loaded (missing_keys): {len(m2.missing_keys)}")
     print(f"[SW]   Extra state_dict entries not used (unexpected_keys): {len(m2.unexpected_keys)}")
-
+    
     return sw_model
 
 

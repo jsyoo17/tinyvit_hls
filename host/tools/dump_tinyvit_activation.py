@@ -93,7 +93,7 @@ def save_activation_bin(path: str, tensor: torch.Tensor) -> None:
         raise ValueError(f"Expected ndim >= 1, got {ndim} for tensor {t.shape}")
     shape = list(t.shape)
 
-    header = np.array([ndim] + shape, dtype=np.int32)
+    header = np.array(shape, dtype=np.int32)
     data = t.numpy().astype(np.float32).ravel()
 
     out_dir = os.path.dirname(path)
@@ -323,7 +323,7 @@ def main():
         "model_name": args.model_name,
         "input_file": str(input_path),
         "dtype": "float32",
-        "activation_bin_format": "ndim:int32, dims:int32[ndim], data:float32[∏dims]",
+        "activation_bin_format": "dims:int32[len(shape)], data:float32[∏dims]",
         "tensors": [],
     }
 

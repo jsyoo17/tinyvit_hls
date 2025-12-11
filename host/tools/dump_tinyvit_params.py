@@ -8,8 +8,7 @@ example usage in powershell:
     --modules patch_embed.conv1.conv stages.0.blocks.0.local_conv
 
   # all Conv2d + Linear + BatchNorm2d + LayerNorm modules
-  python host/tools/dump_tinyvit_params.py `
-    --all
+  python host/tools/dump_tinyvit_params.py --all
 
 Dump selected TinyViT-5M parameters to:
     data/models/tinyvit_5m_224_dist_in22k_ft_in1k_params/
